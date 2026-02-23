@@ -2,7 +2,7 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-st.set_page_config(page_title="Estoque Marketplace", layout="wide")
+st.set_page_config(page_title="Estoque", layout="wide")
 
 # Estilo Dark Roxo
 st.markdown("""
@@ -47,7 +47,7 @@ if st.sidebar.button("Apagar Permanentemente"):
         st.rerun()
 
 # MÉTRICAS
-st.title("🚀 Painel Marketplace Online")
+st.title("🚀 Painel Vendas Online")
 if not df.empty:
     invest = (df['Custo'] * (df['Qtd_Estoque'] + df['Vendas_Realizadas'])).sum()
     receita = (df['Preco_Venda'] * df['Vendas_Realizadas']).sum()
