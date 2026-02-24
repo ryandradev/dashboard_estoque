@@ -4,8 +4,8 @@ import pandas as pd
 from datetime import datetime
 import plotly.express as px
 
-# 1. CONFIGURAÇÃO E ESTILO
-st.set_page_config(page_title="ERP Marketplace Pro v2", layout="wide")
+# 1. CONFIGURAÇÃO E ESTILO DE ALTO NÍVEL
+st.set_page_config(page_title="ERP Marketplace Pro", layout="wide")
 
 st.markdown("""
     <style>
@@ -13,90 +13,103 @@ st.markdown("""
     [data-testid="stMetricValue"] { color: #bf40bf !important; font-weight: bold; }
     .stButton>button { 
         background: linear-gradient(45deg, #6a0dad, #bf40bf); 
-        color: white; border-radius: 8px; border: none; transition: 0.3s;
+        color: white; border-radius: 8px; border: none; font-weight: bold; transition: 0.3s; width: 100%;
     }
-    .stButton>button:hover { transform: scale(1.02); box-shadow: 0px 0px 10px #bf40bf; }
-    h1, h2, h3 { color: #bf40bf; }
+    .stButton>button:hover { transform: scale(1.02); box-shadow: 0px 0px 15px #bf40bf; }
+    h1, h2, h3 { color: #bf40bf; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    .stProgress > div > div > div > div { background-image: linear-gradient(to right, #6a0dad , #bf40bf); }
     [data-testid="stSidebar"] { background-color: #161b22; border-right: 1px solid #bf40bf; }
+    .stTabs [aria-selected="true"] { background-color: #bf40bf !important; color: white !important; border-radius: 5px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. CONEXÃO NUVEM
+# 2. CONEXÃO COM BANCO DE DADOS (GOOGLE SHEETS)
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def get_data():
+def load_all_data():
+    # Carrega Estoque
     estoque = conn.read(worksheet="Página1", ttl=0).dropna(how="all")
+    # Carrega Vendas com proteção
     try:
         vendas = conn.read(worksheet="Vendas", ttl=0).dropna(how="all")
     except:
         vendas = pd.DataFrame(columns=["Data", "Produto", "Custo", "Venda", "Lucro"])
     return estoque, vendas
 
-df_estoque, df_vendas = get_data()
+df_estoque, df_vendas = load_all_data()
 
-# 3. SIDEBAR - CADASTRO COM MARGEM DINÂMICA
-st.sidebar.title("🚀 Gestão de Entrada")
-with st.sidebar.form("novo_prod", clear_on_submit=True):
+# 3. SIDEBAR - ENTRADA DE MERCADORIA
+st.sidebar.title("💜 Gestão de Entrada")
+with st.sidebar.form("form_cadastro", clear_on_submit=True):
+    st.subheader("📦 Novo Lote")
     nome = st.text_input("Nome do Produto")
     custo = st.number_input("Custo Unitário (R$)", min_value=0.0, step=0.01)
-    qtd = st.number_input("Quantidade em Estoque", min_value=1, step=1)
+    qtd = st.number_input("Quantidade Comprada", min_value=1, step=1)
     
     st.markdown("---")
-    tipo_preco = st.radio("Precificação", ["Margem Desejada (%)", "Preço Manual (R$)"])
+    metodo = st.radio("Definição de Preço:", ["Margem Desejada (%)", "Preço Manual (R$)"])
     
-    if tipo_preco == "Margem Desejada (%)":
-        # ESPAÇO PARA DEFINIR A MARGEM QUE VOCÊ DESEJA ADICIONAR
-        margem_input = st.number_input("Quanto de margem quer somar? (%)", min_value=0.0, value=50.0)
-        venda_final = custo * (1 + margem_input/100)
-        st.caption(f"Preço final calculado: R$ {venda_final:.2f}")
+    if metodo == "Margem Desejada (%)":
+        margem_add = st.number_input("Quanto quer somar de margem? (%)", min_value=0.0, value=50.0)
+        venda_calc = custo * (1 + margem_add/100)
+        st.info(f"Preço de Venda será: R$ {venda_calc:.2f}")
+        margem_final = margem_add
     else:
-        venda_final = st.number_input("Preço de Venda Final", min_value=0.0, step=0.01)
-        margem_input = ((venda_final - custo) / venda_final * 100) if venda_final > 0 else 0.0
+        venda_calc = st.number_input("Preço de Venda Final", min_value=0.0, step=0.01)
+        margem_final = ((venda_calc - custo) / venda_calc * 100) if venda_calc > 0 else 0.0
 
-    if st.form_submit_button("CADASTRAR NO SISTEMA"):
-        if nome and venda_final > 0:
-            novo = pd.DataFrame([{
-                "Produto": nome, "Custo": custo, "Margem_%": round(margem_input, 2),
-                "Preco_Venda": venda_final, "Qtd_Estoque": qtd, "Vendas_Realizadas": 0
+    if st.form_submit_button("✅ CADASTRAR NO ESTOQUE"):
+        if nome and venda_calc > 0:
+            novo_item = pd.DataFrame([{
+                "Produto": nome, "Custo": custo, "Margem_%": round(margem_final, 2),
+                "Preco_Venda": venda_calc, "Qtd_Estoque": qtd, "Vendas_Realizadas": 0
             }])
-            df_atualizado = pd.concat([df_estoque, novo], ignore_index=True)
+            df_atualizado = pd.concat([df_estoque, novo_item], ignore_index=True)
             conn.update(worksheet="Página1", data=df_atualizado)
             st.cache_data.clear()
+            st.success("Produto salvo na nuvem!")
             st.rerun()
+        else:
+            st.error("Preencha nome e valor corretamente.")
 
-# 4. CORPO PRINCIPAL
-tab1, tab2, tab3, tab4 = st.tabs(["📊 DASHBOARD", "🛒 VENDER", "📦 ESTOQUE & VENDAS", "⚙️ CONFIGURAÇÕES"])
+# 4. PAINEL PRINCIPAL
+tab1, tab2, tab3, tab4 = st.tabs(["📊 DASHBOARD", "🛒 VENDER", "📦 ESTOQUE & EXTRATOS", "⚙️ CONFIGS"])
 
 with tab1:
+    st.title("🚀 Business Intelligence")
     if not df_vendas.empty:
-        total_vendas = df_vendas['Venda'].sum()
-        total_lucro = df_vendas['Lucro'].sum()
-        ticket_medio = df_vendas['Venda'].mean()
-        
+        # Métricas de topo
+        rec_total = df_vendas['Venda'].sum()
+        lucro_total = df_vendas['Lucro'].sum()
         c1, c2, c3 = st.columns(3)
-        c1.metric("Receita Total", f"R$ {total_vendas:.2f}")
-        c2.metric("Lucro Líquido", f"R$ {total_lucro:.2f}")
-        c3.metric("Ticket Médio", f"R$ {ticket_medio:.2f}")
-        
-        # Gráficos Profissionais
-        col_esq, col_dir = st.columns(2)
-        fig_lucro = px.line(df_vendas, x="Data", y="Lucro", title="Evolução do Lucro no Tempo", color_discrete_sequence=['#bf40bf'])
-        col_esq.plotly_chart(fig_lucro, use_container_width=True)
-        
-        fig_prod = px.bar(df_vendas.groupby("Produto")["Lucro"].sum().reset_index(), x="Produto", y="Lucro", title="Lucro por Produto", color="Lucro")
-        col_dir.plotly_chart(fig_prod, use_container_width=True)
+        c1.metric("Faturamento Total", f"R$ {rec_total:.2f}")
+        c2.metric("Lucro Líquido", f"R$ {lucro_total:.2f}")
+        c3.metric("Ticket Médio", f"R$ {df_vendas['Venda'].mean():.2f}")
+
+        # Gráficos
+        col_a, col_b = st.columns(2)
+        with col_a:
+            fig_evol = px.line(df_vendas, x="Data", y="Lucro", title="Evolução do Lucro", color_discrete_sequence=['#bf40bf'])
+            st.plotly_chart(fig_evol, use_container_width=True)
+        with col_b:
+            lucro_prod = df_vendas.groupby("Produto")["Lucro"].sum().reset_index()
+            fig_bar = px.bar(lucro_prod, x="Produto", y="Lucro", title="Lucro por Produto", color="Lucro", color_continuous_scale='Purples')
+            st.plotly_chart(fig_bar, use_container_width=True)
     else:
-        st.info("Aguardando as primeiras vendas para gerar gráficos.")
+        st.info("Nenhuma venda registrada para gerar gráficos.")
 
 with tab2:
-    st.subheader("Registrar Saída")
+    st.subheader("🛍️ Registrar Saída de Produto")
     if not df_estoque.empty:
-        p_venda = st.selectbox("Produto vendido:", df_estoque['Produto'].unique())
-        if st.button("Confirmar Venda"):
+        p_venda = st.selectbox("O que você vendeu?", df_estoque['Produto'].unique())
+        if st.button("💰 CONFIRMAR VENDA"):
             idx = df_estoque[df_estoque['Produto'] == p_venda].index[0]
             if df_estoque.at[idx, 'Qtd_Estoque'] > 0:
+                # Atualiza estoque localmente
                 df_estoque.at[idx, 'Qtd_Estoque'] -= 1
                 df_estoque.at[idx, 'Vendas_Realizadas'] += 1
+                
+                # Registra venda
                 nova_venda = pd.DataFrame([{
                     "Data": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "Produto": p_venda,
@@ -104,68 +117,58 @@ with tab2:
                     "Venda": df_estoque.at[idx, 'Preco_Venda'],
                     "Lucro": df_estoque.at[idx, 'Preco_Venda'] - df_estoque.at[idx, 'Custo']
                 }])
+                
                 conn.update(worksheet="Página1", data=df_estoque)
-                conn.update(worksheet="Vendas", data=pd.concat([df_vendas, nova_venda]))
+                conn.update(worksheet="Vendas", data=pd.concat([df_vendas, nova_venda], ignore_index=True))
                 st.cache_data.clear()
+                st.balloons()
                 st.rerun()
+            else:
+                st.error("Produto sem estoque!")
 
 with tab3:
-    st.subheader("Gerenciamento de Dados")
+    st.subheader("📂 Gerenciamento de Dados")
     
-    # SEÇÃO ESTOQUE
+    # GERENCIAR ESTOQUE
     st.write("### 📦 Estoque Atual")
     if not df_estoque.empty:
-        # Checkbox para deletar produtos
-        df_exp = df_estoque.copy()
-        df_exp.insert(0, "Selecionar", False)
-        edited_estoque = st.data_editor(df_exp, use_container_width=True, hide_index=True)
-        
-        if st.button("🗑️ Excluir Produtos Selecionados"):
-            indices_para_manter = edited_estoque[edited_estoque["Selecionar"] == False].index
-            df_final = df_estoque.loc[indices_para_manter]
-            conn.update(worksheet="Página1", data=df_final)
+        df_edit_est = df_estoque.copy()
+        df_edit_est.insert(0, "Excluir", False)
+        sel_est = st.data_editor(df_edit_est, use_container_width=True, hide_index=True, key="editor_estoque")
+        if st.button("🗑️ Remover Produtos Selecionados"):
+            indices = sel_est[sel_est["Excluir"] == False].index
+            conn.update(worksheet="Página1", data=df_estoque.loc[indices])
             st.cache_data.clear()
             st.rerun()
-            
+
     st.markdown("---")
     
-    # SEÇÃO VENDAS
-    st.write("### 💸 Histórico de Vendas")
+    # GERENCIAR VENDAS
+    st.write("### 💸 Extrato de Vendas")
     if not df_vendas.empty:
-        df_v_exp = df_vendas.copy()
-        df_v_exp.insert(0, "Selecionar", False)
-        edited_vendas = st.data_editor(df_v_exp, use_container_width=True, hide_index=True)
-        
-        if st.button("🗑️ Excluir Vendas Selecionadas"):
-            indices_v_manter = edited_vendas[edited_vendas["Selecionar"] == False].index
-            df_v_final = df_vendas.loc[indices_v_manter]
-            conn.update(worksheet="Vendas", data=df_v_final)
+        df_edit_ven = df_vendas.copy()
+        df_edit_ven.insert(0, "Excluir", False)
+        sel_ven = st.data_editor(df_edit_ven, use_container_width=True, hide_index=True, key="editor_vendas")
+        if st.button("🗑️ Remover Vendas Selecionadas"):
+            indices_v = sel_ven[sel_ven["Excluir"] == False].index
+            conn.update(worksheet="Vendas", data=df_vendas.loc[indices_v])
             st.cache_data.clear()
             st.rerun()
 
 with tab4:
-    st.subheader("🛠️ Painel de Controle Avançado")
+    st.subheader("⚙️ Configurações & Segurança")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("#### Metas")
-        nova_meta = st.number_input("Meta de Lucro Mensal (R$)", value=2000.0)
-        if st.button("Atualizar Meta"):
-            st.session_state['meta'] = nova_meta
-            st.success("Meta Salva!")
+    meta = st.number_input("Definir Meta de Lucro (R$)", value=2000.0)
+    if st.button("Salvar Meta"):
+        st.session_state['meta_vendas'] = meta
+        st.success("Meta atualizada!")
 
-    with col2:
-        st.write("#### Limpeza de Dados")
-        if st.button("⚠️ RESETAR TODO O SISTEMA"):
-            # Cria dataframes vazios com cabeçalhos
-            empty_est = pd.DataFrame(columns=["Produto", "Custo", "Margem_%", "Preco_Venda", "Qtd_Estoque", "Vendas_Realizadas"])
-            empty_ven = pd.DataFrame(columns=["Data", "Produto", "Custo", "Venda", "Lucro"])
-            conn.update(worksheet="Página1", data=empty_est)
-            conn.update(worksheet="Vendas", data=empty_ven)
-            st.cache_data.clear()
-            st.rerun()
-
-    st.write("#### 📈 Análise de Margem por Custo")
-    if not df_estoque.empty:
-        fig_scatter = px.scatter(df_estoque, x="Custo", y="Margem_%", size="Qtd_Estoque", hover_name="Produto", title="Relação Custo vs Margem (%)")
-        st.plotly_chart(fig_scatter, use_container_width=True)
+    st.markdown("---")
+    st.write("#### ⚠️ Zona de Perigo")
+    if st.button("🔥 LIMPAR TODO O SISTEMA (RESET)"):
+        empty_est = pd.DataFrame(columns=["Produto", "Custo", "Margem_%", "Preco_Venda", "Qtd_Estoque", "Vendas_Realizadas"])
+        empty_ven = pd.DataFrame(columns=["Data", "Produto", "Custo", "Venda", "Lucro"])
+        conn.update(worksheet="Página1", data=empty_est)
+        conn.update(worksheet="Vendas", data=empty_ven)
+        st.cache_data.clear()
+        st.rerun()
