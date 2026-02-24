@@ -18,7 +18,6 @@ st.markdown("""
     h1, h2, h3 { color: #bf40bf; }
     .stProgress > div > div > div > div { background-image: linear-gradient(to right, #6a0dad , #bf40bf); }
     [data-testid="stSidebar"] { background-color: #161b22; border-right: 1px solid #bf40bf; }
-    .stTabs [aria-selected="true"] { background-color: #bf40bf; color: white; border-radius: 5px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -35,34 +34,33 @@ def get_data():
 
 df_estoque, df_vendas = get_data()
 
-# 3. SIDEBAR (CADASTRO FLEXÍVEL)
-st.sidebar.title("💜 Entrada de Estoque")
+# 3. SIDEBAR (CADASTRO COM MARGEM ESCOLHÍVEL)
+st.sidebar.title("💜 Entrada de Stock")
 with st.sidebar.form("novo_prod", clear_on_submit=True):
     nome = st.text_input("Nome do Produto")
     custo = st.number_input("Custo Unitário (R$)", min_value=0.0, step=0.01)
     qtd = st.number_input("Quantidade Comprada", min_value=1, step=1)
     
     st.markdown("---")
-    usar_margem = st.checkbox("Usar margem automática?", value=False)
+    # O SEGREDO ESTÁ AQUI: Escolha de como definir o preço
+    metodo_preco = st.radio("Como definir o preço de venda?", ("Manual", "Definir Margem %"))
     
-    if usar_margem:
-        margem_input = st.number_input("Margem (%)", min_value=0.0, value=30.0)
-        venda_final = float(custo * (1 + margem_input/100))
-        st.info(f"Preço sugerido: R$ {venda_final:.2f}")
+    if metodo_preco == "Definir Margem %":
+        # Aqui tu escolhes a margem que quiseres para ESTE produto
+        margem_escolhida = st.number_input("Margem desejada (%)", min_value=0.0, value=30.0, step=1.0)
+        venda_final = float(custo * (1 + margem_escolhida/100))
+        st.write(f"Preço Resultante: **R$ {venda_final:.2f}**")
     else:
-        venda_final = st.number_input("Preço de Venda Manual (R$)", min_value=0.0, step=0.01)
-        # Calcula a margem real baseada no que o usuário digitou
-        if venda_final > 0:
-            margem_input = ((venda_final - custo) / venda_final) * 100
-        else:
-            margem_input = 0.0
+        venda_final = st.number_input("Preço de Venda Final (R$)", min_value=0.0, step=0.01)
+        # Calcula a margem real para guardar no histórico
+        margem_escolhida = ((venda_final - custo) / venda_final * 100) if venda_final > 0 else 0.0
 
     if st.form_submit_button("✅ CADASTRAR PRODUTO"):
         if nome and (venda_final > 0):
             novo = pd.DataFrame([{
                 "Produto": nome, 
                 "Custo": custo, 
-                "Margem_%": round(margem_input, 2), 
+                "Margem_%": round(margem_escolhida, 2), 
                 "Preco_Venda": venda_final, 
                 "Qtd_Estoque": qtd, 
                 "Vendas_Realizadas": 0
@@ -70,10 +68,10 @@ with st.sidebar.form("novo_prod", clear_on_submit=True):
             df_estoque = pd.concat([df_estoque, novo], ignore_index=True)
             conn.update(worksheet="Página1", data=df_estoque)
             st.cache_data.clear()
-            st.success(f"{nome} adicionado!")
+            st.success(f"{nome} adicionado com sucesso!")
             st.rerun()
         else:
-            st.error("Preencha o nome e o preço de venda!")
+            st.error("Erro: Preencha o nome e o preço!")
 
 # 4. DASHBOARD E EXTRATOS
 tab1, tab2, tab3, tab4 = st.tabs(["📊 DASHBOARD", "🛒 VENDER", "📜 EXTRATOS", "⚙️ CONFIG"])
@@ -86,7 +84,7 @@ with tab1:
         saldo_geral = receita_total - invest_total
         
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("📦 Peças em Estoque", f"{int(df_estoque['Qtd_Estoque'].sum())}")
+        c1.metric("📦 Peças em Stock", f"{int(df_estoque['Qtd_Estoque'].sum())}")
         c2.metric("💸 Investimento Total", f"R$ {invest_total:.2f}")
         c3.metric("📈 Lucro Realizado", f"R$ {lucro_realizado:.2f}")
         c4.metric("⚖️ Saldo do Negócio", f"R$ {saldo_geral:.2f}")
@@ -97,13 +95,11 @@ with tab1:
         st.subheader(f"🎯 Meta de Lucro: R$ {meta_valor:.2f}")
         st.progress(progresso)
         st.caption(f"Progresso: {progresso*100:.1f}%")
-    else:
-        st.info("Nenhum dado disponível.")
 
 with tab2:
-    st.subheader("🛍️ Registrar Venda")
+    st.subheader("🛍️ Registar Venda")
     if not df_estoque.empty:
-        prod_sel = st.selectbox("Selecione o produto:", df_estoque['Produto'].unique())
+        prod_sel = st.selectbox("Selecione o produto vendido:", df_estoque['Produto'].unique())
         if st.button("💰 CONFIRMAR VENDA"):
             idx = df_estoque[df_estoque['Produto'] == prod_sel].index[0]
             if df_estoque.at[idx, 'Qtd_Estoque'] > 0:
@@ -126,31 +122,23 @@ with tab2:
                 st.rerun()
 
 with tab3:
-    st.subheader("📦 Extrato de Estoque & Margens")
-    if not df_estoque.empty:
-        # Tabela bonitona com a margem real de cada item
-        df_show = df_estoque.copy()
-        df_show['Margem Real %'] = ((df_show['Preco_Venda'] - df_show['Custo']) / df_show['Preco_Venda'] * 100).map("{:.2f}%".format)
-        st.dataframe(df_show[['Produto', 'Custo', 'Preco_Venda', 'Margem Real %', 'Qtd_Estoque']], use_container_width=True)
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("📦 Stock & Margens")
+        if not df_estoque.empty:
+            df_view = df_estoque.copy()
+            # Mostra a margem que foi definida no cadastro
+            df_view['Margem Atual'] = df_view['Margem_%'].map("{:.2f}%".format)
+            st.dataframe(df_view[['Produto', 'Custo', 'Preco_Venda', 'Margem Atual', 'Qtd_Estoque']], use_container_width=True)
     
-    st.markdown("---")
-    st.subheader("💸 Histórico de Vendas")
-    if not df_vendas.empty:
-        st.dataframe(df_vendas.sort_index(ascending=False), use_container_width=True)
+    with col_b:
+        st.subheader("💸 Histórico de Vendas")
+        if not df_vendas.empty:
+            st.dataframe(df_vendas.sort_index(ascending=False), use_container_width=True)
 
 with tab4:
     st.subheader("⚙️ Configurações")
-    nova_meta = st.number_input("Nova Meta de Lucro (R$)", value=st.session_state.get('meta_vendas', 2000.0))
+    nova_meta = st.number_input("Ajustar Meta de Lucro (R$)", value=st.session_state.get('meta_vendas', 2000.0))
     if st.button("Salvar Meta"):
         st.session_state['meta_vendas'] = nova_meta
         st.success("Meta atualizada!")
-    
-    st.markdown("---")
-    st.subheader("🗑️ Remover Produto")
-    p_del = st.selectbox("Escolha um produto para apagar:", ["-"] + list(df_estoque['Produto'].unique()))
-    if st.button("Excluir Definitivamente"):
-        if p_del != "-":
-            df_estoque = df_estoque[df_estoque['Produto'] != p_del]
-            conn.update(worksheet="Página1", data=df_estoque)
-            st.cache_data.clear()
-            st.rerun()
