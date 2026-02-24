@@ -2,9 +2,10 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
+import plotly.express as px
 
 # 1. CONFIGURAÇÃO E ESTILO
-st.set_page_config(page_title="Gestão Marketplace Pro", layout="wide")
+st.set_page_config(page_title="ERP Marketplace Pro v2", layout="wide")
 
 st.markdown("""
     <style>
@@ -12,11 +13,10 @@ st.markdown("""
     [data-testid="stMetricValue"] { color: #bf40bf !important; font-weight: bold; }
     .stButton>button { 
         background: linear-gradient(45deg, #6a0dad, #bf40bf); 
-        color: white; border-radius: 10px; border: none; font-weight: bold; transition: 0.3s; width: 100%;
+        color: white; border-radius: 8px; border: none; transition: 0.3s;
     }
-    .stButton>button:hover { transform: scale(1.02); box-shadow: 0px 0px 15px #bf40bf; }
+    .stButton>button:hover { transform: scale(1.02); box-shadow: 0px 0px 10px #bf40bf; }
     h1, h2, h3 { color: #bf40bf; }
-    .stProgress > div > div > div > div { background-image: linear-gradient(to right, #6a0dad , #bf40bf); }
     [data-testid="stSidebar"] { background-color: #161b22; border-right: 1px solid #bf40bf; }
     </style>
     """, unsafe_allow_html=True)
@@ -25,120 +25,147 @@ st.markdown("""
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def get_data():
-    estoque = conn.read(worksheet="Página1", ttl=0)
+    estoque = conn.read(worksheet="Página1", ttl=0).dropna(how="all")
     try:
-        vendas_hist = conn.read(worksheet="Vendas", ttl=0)
+        vendas = conn.read(worksheet="Vendas", ttl=0).dropna(how="all")
     except:
-        vendas_hist = pd.DataFrame(columns=["Data", "Produto", "Custo", "Venda", "Lucro"])
-    return estoque, vendas_hist
+        vendas = pd.DataFrame(columns=["Data", "Produto", "Custo", "Venda", "Lucro"])
+    return estoque, vendas
 
 df_estoque, df_vendas = get_data()
 
-# 3. SIDEBAR (CADASTRO COM MARGEM ESCOLHÍVEL)
-st.sidebar.title("💜 Entrada de Stock")
+# 3. SIDEBAR - CADASTRO COM MARGEM DINÂMICA
+st.sidebar.title("🚀 Gestão de Entrada")
 with st.sidebar.form("novo_prod", clear_on_submit=True):
     nome = st.text_input("Nome do Produto")
     custo = st.number_input("Custo Unitário (R$)", min_value=0.0, step=0.01)
-    qtd = st.number_input("Quantidade Comprada", min_value=1, step=1)
+    qtd = st.number_input("Quantidade em Estoque", min_value=1, step=1)
     
     st.markdown("---")
-    # O SEGREDO ESTÁ AQUI: Escolha de como definir o preço
-    metodo_preco = st.radio("Como definir o preço de venda?", ("Manual", "Definir Margem %"))
+    tipo_preco = st.radio("Precificação", ["Margem Desejada (%)", "Preço Manual (R$)"])
     
-    if metodo_preco == "Definir Margem %":
-        # Aqui tu escolhes a margem que quiseres para ESTE produto
-        margem_escolhida = st.number_input("Margem desejada (%)", min_value=0.0, value=30.0, step=1.0)
-        venda_final = float(custo * (1 + margem_escolhida/100))
-        st.write(f"Preço Resultante: **R$ {venda_final:.2f}**")
+    if tipo_preco == "Margem Desejada (%)":
+        # ESPAÇO PARA DEFINIR A MARGEM QUE VOCÊ DESEJA ADICIONAR
+        margem_input = st.number_input("Quanto de margem quer somar? (%)", min_value=0.0, value=50.0)
+        venda_final = custo * (1 + margem_input/100)
+        st.caption(f"Preço final calculado: R$ {venda_final:.2f}")
     else:
-        venda_final = st.number_input("Preço de Venda Final (R$)", min_value=0.0, step=0.01)
-        # Calcula a margem real para guardar no histórico
-        margem_escolhida = ((venda_final - custo) / venda_final * 100) if venda_final > 0 else 0.0
+        venda_final = st.number_input("Preço de Venda Final", min_value=0.0, step=0.01)
+        margem_input = ((venda_final - custo) / venda_final * 100) if venda_final > 0 else 0.0
 
-    if st.form_submit_button("✅ CADASTRAR PRODUTO"):
-        if nome and (venda_final > 0):
+    if st.form_submit_button("CADASTRAR NO SISTEMA"):
+        if nome and venda_final > 0:
             novo = pd.DataFrame([{
-                "Produto": nome, 
-                "Custo": custo, 
-                "Margem_%": round(margem_escolhida, 2), 
-                "Preco_Venda": venda_final, 
-                "Qtd_Estoque": qtd, 
-                "Vendas_Realizadas": 0
+                "Produto": nome, "Custo": custo, "Margem_%": round(margem_input, 2),
+                "Preco_Venda": venda_final, "Qtd_Estoque": qtd, "Vendas_Realizadas": 0
             }])
-            df_estoque = pd.concat([df_estoque, novo], ignore_index=True)
-            conn.update(worksheet="Página1", data=df_estoque)
+            df_atualizado = pd.concat([df_estoque, novo], ignore_index=True)
+            conn.update(worksheet="Página1", data=df_atualizado)
             st.cache_data.clear()
-            st.success(f"{nome} adicionado com sucesso!")
             st.rerun()
-        else:
-            st.error("Erro: Preencha o nome e o preço!")
 
-# 4. DASHBOARD E EXTRATOS
-tab1, tab2, tab3, tab4 = st.tabs(["📊 DASHBOARD", "🛒 VENDER", "📜 EXTRATOS", "⚙️ CONFIG"])
+# 4. CORPO PRINCIPAL
+tab1, tab2, tab3, tab4 = st.tabs(["📊 DASHBOARD", "🛒 VENDER", "📦 ESTOQUE & VENDAS", "⚙️ CONFIGURAÇÕES"])
 
 with tab1:
-    if not df_estoque.empty:
-        invest_total = (df_estoque['Custo'] * (df_estoque['Qtd_Estoque'] + df_estoque['Vendas_Realizadas'])).sum()
-        receita_total = (df_estoque['Preco_Venda'] * df_estoque['Vendas_Realizadas']).sum()
-        lucro_realizado = df_vendas['Lucro'].sum() if not df_vendas.empty else 0.0
-        saldo_geral = receita_total - invest_total
+    if not df_vendas.empty:
+        total_vendas = df_vendas['Venda'].sum()
+        total_lucro = df_vendas['Lucro'].sum()
+        ticket_medio = df_vendas['Venda'].mean()
         
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("📦 Peças em Stock", f"{int(df_estoque['Qtd_Estoque'].sum())}")
-        c2.metric("💸 Investimento Total", f"R$ {invest_total:.2f}")
-        c3.metric("📈 Lucro Realizado", f"R$ {lucro_realizado:.2f}")
-        c4.metric("⚖️ Saldo do Negócio", f"R$ {saldo_geral:.2f}")
-
-        st.markdown("---")
-        meta_valor = st.session_state.get('meta_vendas', 2000.0)
-        progresso = min(lucro_realizado / meta_valor, 1.0) if meta_valor > 0 else 0
-        st.subheader(f"🎯 Meta de Lucro: R$ {meta_valor:.2f}")
-        st.progress(progresso)
-        st.caption(f"Progresso: {progresso*100:.1f}%")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Receita Total", f"R$ {total_vendas:.2f}")
+        c2.metric("Lucro Líquido", f"R$ {total_lucro:.2f}")
+        c3.metric("Ticket Médio", f"R$ {ticket_medio:.2f}")
+        
+        # Gráficos Profissionais
+        col_esq, col_dir = st.columns(2)
+        fig_lucro = px.line(df_vendas, x="Data", y="Lucro", title="Evolução do Lucro no Tempo", color_discrete_sequence=['#bf40bf'])
+        col_esq.plotly_chart(fig_lucro, use_container_width=True)
+        
+        fig_prod = px.bar(df_vendas.groupby("Produto")["Lucro"].sum().reset_index(), x="Produto", y="Lucro", title="Lucro por Produto", color="Lucro")
+        col_dir.plotly_chart(fig_prod, use_container_width=True)
+    else:
+        st.info("Aguardando as primeiras vendas para gerar gráficos.")
 
 with tab2:
-    st.subheader("🛍️ Registar Venda")
+    st.subheader("Registrar Saída")
     if not df_estoque.empty:
-        prod_sel = st.selectbox("Selecione o produto vendido:", df_estoque['Produto'].unique())
-        if st.button("💰 CONFIRMAR VENDA"):
-            idx = df_estoque[df_estoque['Produto'] == prod_sel].index[0]
+        p_venda = st.selectbox("Produto vendido:", df_estoque['Produto'].unique())
+        if st.button("Confirmar Venda"):
+            idx = df_estoque[df_estoque['Produto'] == p_venda].index[0]
             if df_estoque.at[idx, 'Qtd_Estoque'] > 0:
                 df_estoque.at[idx, 'Qtd_Estoque'] -= 1
                 df_estoque.at[idx, 'Vendas_Realizadas'] += 1
-                
                 nova_venda = pd.DataFrame([{
-                    "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
-                    "Produto": prod_sel,
+                    "Data": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "Produto": p_venda,
                     "Custo": df_estoque.at[idx, 'Custo'],
                     "Venda": df_estoque.at[idx, 'Preco_Venda'],
                     "Lucro": df_estoque.at[idx, 'Preco_Venda'] - df_estoque.at[idx, 'Custo']
                 }])
-                df_vendas = pd.concat([df_vendas, nova_venda], ignore_index=True)
-                
                 conn.update(worksheet="Página1", data=df_estoque)
-                conn.update(worksheet="Vendas", data=df_vendas)
+                conn.update(worksheet="Vendas", data=pd.concat([df_vendas, nova_venda]))
                 st.cache_data.clear()
-                st.balloons()
                 st.rerun()
 
 with tab3:
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.subheader("📦 Stock & Margens")
-        if not df_estoque.empty:
-            df_view = df_estoque.copy()
-            # Mostra a margem que foi definida no cadastro
-            df_view['Margem Atual'] = df_view['Margem_%'].map("{:.2f}%".format)
-            st.dataframe(df_view[['Produto', 'Custo', 'Preco_Venda', 'Margem Atual', 'Qtd_Estoque']], use_container_width=True)
+    st.subheader("Gerenciamento de Dados")
     
-    with col_b:
-        st.subheader("💸 Histórico de Vendas")
-        if not df_vendas.empty:
-            st.dataframe(df_vendas.sort_index(ascending=False), use_container_width=True)
+    # SEÇÃO ESTOQUE
+    st.write("### 📦 Estoque Atual")
+    if not df_estoque.empty:
+        # Checkbox para deletar produtos
+        df_exp = df_estoque.copy()
+        df_exp.insert(0, "Selecionar", False)
+        edited_estoque = st.data_editor(df_exp, use_container_width=True, hide_index=True)
+        
+        if st.button("🗑️ Excluir Produtos Selecionados"):
+            indices_para_manter = edited_estoque[edited_estoque["Selecionar"] == False].index
+            df_final = df_estoque.loc[indices_para_manter]
+            conn.update(worksheet="Página1", data=df_final)
+            st.cache_data.clear()
+            st.rerun()
+            
+    st.markdown("---")
+    
+    # SEÇÃO VENDAS
+    st.write("### 💸 Histórico de Vendas")
+    if not df_vendas.empty:
+        df_v_exp = df_vendas.copy()
+        df_v_exp.insert(0, "Selecionar", False)
+        edited_vendas = st.data_editor(df_v_exp, use_container_width=True, hide_index=True)
+        
+        if st.button("🗑️ Excluir Vendas Selecionadas"):
+            indices_v_manter = edited_vendas[edited_vendas["Selecionar"] == False].index
+            df_v_final = df_vendas.loc[indices_v_manter]
+            conn.update(worksheet="Vendas", data=df_v_final)
+            st.cache_data.clear()
+            st.rerun()
 
 with tab4:
-    st.subheader("⚙️ Configurações")
-    nova_meta = st.number_input("Ajustar Meta de Lucro (R$)", value=st.session_state.get('meta_vendas', 2000.0))
-    if st.button("Salvar Meta"):
-        st.session_state['meta_vendas'] = nova_meta
-        st.success("Meta atualizada!")
+    st.subheader("🛠️ Painel de Controle Avançado")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("#### Metas")
+        nova_meta = st.number_input("Meta de Lucro Mensal (R$)", value=2000.0)
+        if st.button("Atualizar Meta"):
+            st.session_state['meta'] = nova_meta
+            st.success("Meta Salva!")
+
+    with col2:
+        st.write("#### Limpeza de Dados")
+        if st.button("⚠️ RESETAR TODO O SISTEMA"):
+            # Cria dataframes vazios com cabeçalhos
+            empty_est = pd.DataFrame(columns=["Produto", "Custo", "Margem_%", "Preco_Venda", "Qtd_Estoque", "Vendas_Realizadas"])
+            empty_ven = pd.DataFrame(columns=["Data", "Produto", "Custo", "Venda", "Lucro"])
+            conn.update(worksheet="Página1", data=empty_est)
+            conn.update(worksheet="Vendas", data=empty_ven)
+            st.cache_data.clear()
+            st.rerun()
+
+    st.write("#### 📈 Análise de Margem por Custo")
+    if not df_estoque.empty:
+        fig_scatter = px.scatter(df_estoque, x="Custo", y="Margem_%", size="Qtd_Estoque", hover_name="Produto", title="Relação Custo vs Margem (%)")
+        st.plotly_chart(fig_scatter, use_container_width=True)
